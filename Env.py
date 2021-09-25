@@ -1,5 +1,6 @@
 from os import stat
 import gym
+from numpy.lib.function_base import average
 from numpy.lib.shape_base import column_stack
 from Robot import Robot
 
@@ -31,8 +32,9 @@ class Env(gym.Env):
                 self.robot.position[1] += 1
         
         # get reward
-        reward = self.get_reward()
         state = self.get_state()
+        reward = self.get_reward()
+        
         # update measurement parameters
         self.num_step += 1
 
@@ -52,6 +54,8 @@ class Env(gym.Env):
         # build map
         self.build_map()
         self.build_hole()
+
+        self.robot.position = [0,0]
         
         # reset measure parameters
         self.num_step = 0
@@ -76,18 +80,23 @@ class Env(gym.Env):
         """
         discription about how to calculate reward.
         """
+        penalty = 0
+        if self.state == self.last_state:
+            penalty = -100
         row = self.robot.position[0]
         column = self.robot.position[1]
-        return self.map[row][column]
+        return self.map[row][column] + penalty
 
     def get_state(self):
-        self.state = self.robot.position
+        self.last_state = self.state
+        self.state = []
+        self.state += self.robot.position
         return self.state
 
     def print_log_info(self):
         print( "step: {0}, position of robot {1}".format(self.num_step ,self.state) )
         
-    def monte_carlo_method(self):
+    def monte_carlo_method(self, num_episode):
         """
         # Monte Carlo Method:
         # 1. Sample and get the q(s,a) value
@@ -97,31 +106,54 @@ class Env(gym.Env):
         """
         # initialize parameter and delta-soft policy pi(a|S), 
         # as well as the discounted factor
-        delta = 0.01
-        gama = 0.5
-        a = self.action_space
-        pi = [0 for _ in range(len(self.action_space)) ]
+        delta = 0.05
+        gama = 0.9
+        policy = {} # pi(a|s)
         
-        # dictionary of Q(s,a), R(s,a)
+        # dictionary of Q(s,a), return(s,a)
         Q = {}
-        R = {}
+        returns = {}
 
-        while True:
+        while (num_episode):
             # Generate a episode
-            episode = [] # [[S, A, R],...]
-
+            episode = self.run_an_episode() # [[S(t), A(t), R(t+1)],...]
+            num_episode -= 1
             num_steps = len(episode)
 
-            for step in num_steps:
+            # initialize G
+            G = 0
+            for i in range(1, num_steps+1):
+                state = episode[-i][0]
+                action = episode[-i][1]
+                reward = episode[-i][2]
+
                 # renew the returns, G
-                # G = gama * G(t+1) + R(t+1), not sure whethere is t+1 or t
+                G = gama * G + reward
 
                 # append G to returns(s, a)
+                state = tuple(state)
+                if state not in returns:
+                    returns[state] = {}
+                    Q[state] = {}
+                    policy[state] = {}
+                if action not in returns[state]:
+                    returns[state][action] = []
+                    Q[state][action] = 0
+                returns[state][action].append(G)
 
-                # get action greedly
+                # renew Q(s,a)
+                Q[state][action] = sum(returns[state][action]) / len( returns[state][action] )
+
+                # choose action greedily
+                best_action = max( Q[state], key=Q[state].get )
 
                 # Get new policy [policy improvement]
-                pass
+                for _, value in self.robot.action_space.items():
+                    policy[state][value] = delta/len(self.robot.action_space)
+                policy[state][best_action] = 1 - delta + delta/len(self.robot.action_space)
+        
+        return policy
+
 
     def run_an_episode(self):
         done = False
@@ -130,7 +162,7 @@ class Env(gym.Env):
         while not done:  
             action = env.robot.choose_action(state)
             state, reward, done = env.step(action)
-            episode.append( (state, action, reward) )
+            episode += [(state, action, reward)] 
             env.print_log_info()
         return episode
 
@@ -138,8 +170,8 @@ if __name__ == "__main__":
     size = (4, 4)
     coord = [ (1,1), (1,3), (2,3), (3,0) ]
     env = Env(size, coord)
-    episode = env.run_an_episode()
-    pass
+    policy = env.monte_carlo_method(1000)
+    print(policy)
 
 
 
