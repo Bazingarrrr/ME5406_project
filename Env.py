@@ -1,18 +1,21 @@
-from os import stat
 import gym
 import pygame
-from random import random, choices, randint
+from random import randint
 from pygame import key
 
 from pygame.time import delay
 from Robot import Robot
-from copy import deepcopy
+
+LIGHTGRAY = (211, 211, 211)
+TRAIN = ( 255, 182, 193 )
+TEST = (255,255,255)
 
 class Env(gym.Env):
     def __init__(self, size, coord=None, gui=False, use_memo=True, epsilon_decay=True) -> None:
         self.epsilon = 0.05
         self.gama = 0.9
         self.learning_rate = 1
+        self.max_step = 100000
 
         self.map = None
         self.num_step = 0
@@ -41,6 +44,7 @@ class Env(gym.Env):
             self.screen = pygame.display.set_mode((self.screen_width,self.screen_height))
             self.screen.fill( self.background_color )
 
+################################### Interaction #######################################
     def step(self, action):
         # renew the state
         self.robot.move(action, self.size)
@@ -55,7 +59,7 @@ class Env(gym.Env):
         # check whether is done:
         # whether robot reaches the Frisbee
         done = False
-        if self.map[state[0]][state[1]] != 0 or self.num_step > 100:
+        if self.map[state[0]][state[1]] != 0 or self.num_step > self.max_step:
             done = True
         return state, reward, done
 
@@ -129,7 +133,7 @@ class Env(gym.Env):
         self.build_map_without_hole()
         self.build_hole()
         if self.gui:
-            self.drawGrid()
+            self.draw_grid()
 
     def build_map_without_hole(self):
         size = self.size
@@ -246,6 +250,8 @@ class Env(gym.Env):
                     Q[state][action] = 0
                 returns[state][action].append(G)
 
+                self.plot_result([episode[i-1]], background=TRAIN, delay_time=0)
+
                 # renew Q(s,a)
                 Q[state][action] = sum(returns[state][action]) / len( returns[state][action] )
 
@@ -357,10 +363,9 @@ class Env(gym.Env):
         return Q, policy
 
 ################################### GUI #######################################
-    def drawGrid(self, map=None):
+    def draw_grid(self, map=None):
         if map is None:
-            map = self.map
-
+            map = self.map      
         for x in range(0, self.screen_width, self.block_size):
             for y in range(0, self.screen_height, self.block_size):
                 j,i = int(x/self.block_size), int(y/self.block_size)
@@ -370,7 +375,8 @@ class Env(gym.Env):
                 elif map[i][j] == 1:
                     pygame.draw.rect(self.screen, (0,255,0), rect, 0)
                 else:
-                    pygame.draw.rect(self.screen, (255,255,255), rect, 0)
+                    pygame.draw.rect(self.screen, self.background_color, rect, 0)
+        self.draw_grid_line(map)
         pygame.display.flip()
         
     def get_circle_pos(self, state):
@@ -379,28 +385,37 @@ class Env(gym.Env):
         y = 0.5 * self.block_size + y * self.block_size
         return (y, x)
 
-    def plot_result(self, episode, delay_time=100):
+    def plot_result(self, episode, background=TEST,delay_time=0):
         """
         print map and robot at each step
         green - target point
         red - pitfall
         black - robot
         """
-        self.drawGrid()
-
+        self.background_color = background
+        self.draw_grid()
         pos = tuple()
         for state, action, reward in episode:
             if pos != ():
-                pygame.draw.circle(self.screen, self.background_color, pos, self.block_size/2)
+                pygame.draw.circle(self.screen, self.background_color, pos, 0.9*self.block_size/2)
             pos = self.get_circle_pos(state)
-            pygame.draw.circle(self.screen, (0,0,0), pos, self.block_size/2)
+            pygame.draw.circle(self.screen, (0,0,0), pos, 0.9*self.block_size/2)
             pygame.display.flip()
             delay(delay_time)
             
 
+    def draw_grid_line(self, map=None):
+        if map is None:
+            map = self.map
+        for x in range(0, self.screen_width, self.block_size):
+            pygame.draw.line(self.screen, LIGHTGRAY, (x,0), (x,self.screen_height), 2)
+        for y in range(0, self.screen_height, self.block_size):
+            pygame.draw.line(self.screen, LIGHTGRAY, (0,y), (self.screen_width, y), 2)
+
+
 if __name__ == "__main__":
     def run_test_10(test_num=10, policy_type='Qlearning'):
-        size = (10, 10)
+        size = (9,9)
         # coord = [ (1,1), (1,3), (2,3), (3,0) ]
         env = Env(size, gui=True)
 
@@ -463,8 +478,8 @@ if __name__ == "__main__":
 
     # run_test_4(test_num=10)
     # run_test_10(test_num=50, policy_type='SARSA')
-    run_test_10(test_num=20, policy_type='qlearning')
-    # run_test_10(test_num=20, policy_type='monte_carlo')
+    # run_test_10(test_num=20, policy_type='qlearning')
+    run_test_10(test_num=20, policy_type='monte_carlo')
         
     
 
