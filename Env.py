@@ -1,8 +1,8 @@
 import gym
+import os
+import matplotlib.pyplot as plt
 import pygame
 from random import randint
-from pygame import key
-
 from pygame.time import delay
 from Robot import Robot
 
@@ -12,10 +12,11 @@ TEST = (255,255,255)
 
 class Env(gym.Env):
     def __init__(self, size, coord=None, gui=False, use_memo=True, epsilon_decay=True) -> None:
-        self.epsilon = 0.05
+        self.epsilon = 0.1
         self.gama = 0.9
-        self.learning_rate = 1
-        self.max_step = 100000
+        self.learning_rate = 0.1
+        self.epsilon_max = 0.7
+        self.max_step = 500
 
         self.map = None
         self.num_step = 0
@@ -31,9 +32,8 @@ class Env(gym.Env):
         self.robot = Robot()
 
         if self.epsilon_decay is True:
-            self.epsilon_max = 0.5
             self.epsilon_min = 0.0005
-            self.epsilon_decay_value = 0.0005
+            self.epsilon_decay_value = 0.005
         if self.gui:
             pygame.init()
             # Initializing surface
@@ -76,6 +76,7 @@ class Env(gym.Env):
         self.build_memo()
         # reset measure parameters
         self.num_step = 0
+        self.epsilon = 0.05
 
         return self.get_state()
 
@@ -103,16 +104,18 @@ class Env(gym.Env):
         self.state += self.robot.position
         return self.state
 
-    def run_an_episode(self, policy=None):
+    def run_an_episode(self, policy=None, greedy=True):
+        # reset environment parameters
         done = False
         state = self.reset()
         episode = []
+        # Simulation Begin
         while not done:  
-            action = self.robot.choose_action(state, greedy=True, policy=policy)
+            action = self.robot.choose_action(state, greedy=greedy, policy=policy)
             next_state, reward, done = self.step(action)
             episode += [(state, action, reward)] 
             state = next_state
-            # env.print_log_info()
+        # record step infomation
         episode += [(state, '', 0)]
         return episode
 
@@ -122,10 +125,13 @@ class Env(gym.Env):
     def print_result(self):
         state = self.state
         if self.map[state[0]][state[1]] == 1:
+            print('SUCCESS')
             return "SUCCESS"
         elif self.map[state[0]][state[1]] == -1:
+            print('FAIL')
             return "FAIL"
         else:
+            print('TIME OUT')
             return "TIME OUT"
         
 ################################### Build MAP #######################################
@@ -216,16 +222,19 @@ class Env(gym.Env):
         """
         # initialize parameter and delta-soft policy pi(a|S), 
         # as well as the discounted factor
-        gama = 0.9
-        policy = {} # pi(a|s)
+        self.epsilon = self.epsilon_max
+        self.max_step = 100000
+        gama = self.gama
+
+        Q, policy = self.init_Q_table()
         
         # dictionary of Q(s,a), return(s,a)
-        Q = {}
         returns = {}
+        record = []
 
         while (num_episode):
             # Generate a episode
-            episode = self.run_an_episode() # [[S(t), A(t), R(t+1)],...]
+            episode = self.run_an_episode(policy, greedy=False) # [[S(t), A(t), R(t+1)],...]
             num_episode -= 1
             num_steps = len(episode)
 
@@ -250,28 +259,27 @@ class Env(gym.Env):
                     Q[state][action] = 0
                 returns[state][action].append(G)
 
-                self.plot_result([episode[i-1]], background=TRAIN, delay_time=0)
+                if self.gui:
+                    self.plot_result([episode[i-1]], background=TRAIN, delay_time=0)
 
                 # renew Q(s,a)
                 Q[state][action] = sum(returns[state][action]) / len( returns[state][action] )
-
-                policy = self.derive_policy_from(Q, policy)
-        return policy
+            policy = self.derive_policy_from(Q, policy)
+            record.append( (self.reach_goal(episode[-1][0]), self.num_step) ) 
+            
+        self.max_step = 500
+        return policy, record
 
     def SARSA(self, num_episode):
-        """
-        SARSA:
-        """
         # initialize Q(s,a), all with arbitrary value but terminal state Q(s_terminal)=0
         Q, policy = self.init_Q_table()
-        # self.epsilon = self.epsilon_max
+        record = []
+        if self.epsilon_decay:
+            self.epsilon = self.epsilon_max
         # Loop Begin
         while(num_episode):
             # epsilon decay
-            if self.epsilon_decay and self.epsilon >= self.epsilon_min:
-                self.epsilon -= self.epsilon_decay_value
-            else:
-                self.epsilon = 0
+            self.decay_epsilon()
 
             # Initialize S
             state = self.reset()
@@ -291,23 +299,29 @@ class Env(gym.Env):
                 
                 state = next_state
                 action = next_action  
+            record.append( (self.reach_goal(state), self.num_step) ) 
             policy = self.derive_policy_from(Q, policy)
             num_episode -= 1
-        return policy
+        return policy, record
 
     def Qlearning(self, num_episode):
         """
         Qlearning
         """
-        a = 1 # learning rate
-        gama = self.gama
+        a = self.learning_rate # learning rate
+        gama = self.gama # discountedd rate
 
         Q, policy = self.init_Q_table()
-
+        record = []
         # initialize Q(s,a), all with arbitrary value but terminal state Q(s_terminal)=0
 
+        if self.epsilon_decay:
+            self.epsilon = self.epsilon_max
         # Loop Begin
         while(num_episode):
+            # epsilon decay
+            self.decay_epsilon()
+
             # Initialize S
             state = self.reset()
             action = self.robot.choose_action(state, greedy=False, policy=policy)
@@ -326,10 +340,12 @@ class Env(gym.Env):
                 Q[state][action] = Q[state][action] + a * ( reward + gama * Q[next_state][best_next_action] - Q[state][action] )
                 state = next_state
                 action = next_action
+            record.append( (self.reach_goal(state), self.num_step) ) 
+
             num_episode -= 1
             policy = self.derive_policy_from(Q,policy)
 
-        return policy
+        return policy, record
 
     def derive_policy_from(self, Q, policy):
         """
@@ -341,6 +357,12 @@ class Env(gym.Env):
                 policy[state][value] = self.epsilon/len(self.robot.action_space)
             policy[state][best_action] = 1 - self.epsilon + self.epsilon/len(self.robot.action_space)
         return policy
+
+    def decay_epsilon(self):
+        if self.epsilon_decay and self.epsilon >= self.epsilon_min:
+            self.epsilon -= self.epsilon_decay_value
+        if self.epsilon <= 0:
+            self.epsilon = self.epsilon_min
 
     def init_Q_table(self):
         """
@@ -385,6 +407,14 @@ class Env(gym.Env):
         y = 0.5 * self.block_size + y * self.block_size
         return (y, x)
 
+    def draw_grid_line(self, map=None):
+        if map is None:
+            map = self.map
+        for x in range(0, self.screen_width, self.block_size):
+            pygame.draw.line(self.screen, LIGHTGRAY, (x,0), (x,self.screen_height), 2)
+        for y in range(0, self.screen_height, self.block_size):
+            pygame.draw.line(self.screen, LIGHTGRAY, (0,y), (self.screen_width, y), 2)
+
     def plot_result(self, episode, background=TEST,delay_time=0):
         """
         print map and robot at each step
@@ -403,83 +433,68 @@ class Env(gym.Env):
             pygame.display.flip()
             delay(delay_time)
             
+def plot_analysis(records, fig_name):
+    fig_path = '/figure'
+    if not os.path.exists(os.getcwd() + fig_path ):
+        os.mkdir(os.getcwd() + fig_path)
+    for i, record in enumerate(records):
+        if record[0]: # if reach the gaol
+            plt.plot(i, record[1], 'ro', markersize=1)
+        else: # didn't reach the goal
+            plt.plot(i, record[1], 'bo', markersize=1)
+    fig_path = fig_path + '/' + fig_name + '.png'
+    plt.savefig(os.getcwd() + fig_path)
 
-    def draw_grid_line(self, map=None):
-        if map is None:
-            map = self.map
-        for x in range(0, self.screen_width, self.block_size):
-            pygame.draw.line(self.screen, LIGHTGRAY, (x,0), (x,self.screen_height), 2)
-        for y in range(0, self.screen_height, self.block_size):
-            pygame.draw.line(self.screen, LIGHTGRAY, (0,y), (self.screen_width, y), 2)
 
+
+def run_test(size=(10,10), test_num=10, if_gui=True, policy_type='qlearning', episode_num=2000):
+    success_num = 0
+    fail_num = 0
+    timeout_num = 0
+    test_file_name =  str(size) + str(episode_num) + '_' + policy_type + '_' + str(test_num)
+    for i in range(test_num):
+        print("Begin test for round {0}-{1}".format(i, policy_type))
+        result,record = single_test(size, if_gui, policy_type, episode_num)
+        if result == 'SUCCESS':
+            success_num += 1
+        elif result == 'FAIL':
+            fail_num += 1
+        else: # result == 'TIMEOUT'
+            timeout_num += 1
+    log_info = "{0}--success rate {1}%, fail rate {2}%, time out rate {3}%\n".format( test_file_name,100*success_num/test_num, 
+                                                                        100*fail_num/test_num,
+                                                                        100*timeout_num/test_num)
+    print(log_info)
+    if not os.path.exists(os.getcwd() + '/result'):
+        os.mkdir(os.getcwd() + '/result')
+    with open(os.getcwd() + '/result/' + test_file_name + '_result.txt', 'w+') as f:
+        f.write(log_info)
+        f.close()
+    plot_analysis(record, fig_name= test_file_name )
+    return 
+
+def single_test(size, if_gui=False, policy_type='qlearning', episode_num = 2000):
+    if size == (4, 4):
+        coord = [ (1,1), (1,3), (2,3), (3,0) ]
+    else:
+        coord = None
+    env = Env(size, gui=if_gui, coord=coord, use_memo=True)
+    if policy_type == 'qlearning':
+        policy, record = env.Qlearning(episode_num)
+    elif policy_type == 'SARSA':
+        policy, record = env.SARSA(episode_num)
+    elif policy_type == 'monte_carlo':
+        policy, record = env.monte_carlo_method(episode_num)
+    episode = env.run_an_episode(policy=policy)
+    if env.gui:
+        env.plot_result(episode,delay_time=100)
+    return env.print_result(), record
 
 if __name__ == "__main__":
-    def run_test_10(test_num=10, policy_type='Qlearning'):
-        size = (9,9)
-        # coord = [ (1,1), (1,3), (2,3), (3,0) ]
-        env = Env(size, gui=True)
+    size = (10,10)
+    record = run_test(size=size,test_num=5, if_gui=False, policy_type='qlearning')
+    
 
-        success_num = 0
-        fail_num = 0
-        timeout_num = 0
-        for i in range(test_num):
-            print("Begin test for round {0}".format(i))
-            env.map = None
-            if policy_type == 'qlearning':
-                policy = env.Qlearning(2000)
-            elif policy_type == 'SARSA':
-                policy = env.SARSA(2000)
-            elif policy_type == 'monte_carlo':
-                policy = policy = env.monte_carlo_method(2000)
-            episode = env.run_an_episode(policy=policy)
-            if env.print_result() == 'SUCCESS':
-                success_num += 1
-                print('SUCCESS')
-            elif env.print_result() == 'FAIL':
-                fail_num += 1
-                print('FAIL')
-            else:
-                timeout_num += 1
-                print('TIME OUT')
-            if env.gui:
-                env.plot_result(episode,delay_time=30)
-        print("success rate {0}%, fail rate {1}%, time out rate {2}%".format( 100*success_num/test_num, 
-                                                                            100*fail_num/test_num,
-                                                                            100*timeout_num/test_num ))
-
-    def run_test_4(test_num=10):
-        size = (4, 4)
-        coord = [ (1,1), (1,3), (2,3), (3,0) ]
-        env = Env(size, gui=True, coord=coord, use_memo=True)
-
-        success_num = 0
-        fail_num = 0
-        timeout_num = 0
-        for i in range(test_num):
-            print("Begin test for round {0}".format(i))
-            policy = env.monte_carlo_method(2000)
-            # policy = env.SARSA(2000)
-            # policy = env.Qlearning(2000)
-            episode = env.run_an_episode(policy=policy)
-            if env.print_result() == 'SUCCESS':
-                success_num += 1
-                print('SUCCESS')
-            elif env.print_result() == 'FAIL':
-                fail_num += 1
-                print('FAIL')
-            else:
-                timeout_num += 1
-                print('TIME OUT')
-            if env.gui:
-                env.plot_result(episode,delay_time=500)
-        print("success rate {0}%, fail rate {1}%, time out rate {2}%".format( 100*success_num/test_num, 
-                                                                            100*fail_num/test_num,
-                                                                            100*timeout_num/test_num ))
-
-    # run_test_4(test_num=10)
-    # run_test_10(test_num=50, policy_type='SARSA')
-    # run_test_10(test_num=20, policy_type='qlearning')
-    run_test_10(test_num=20, policy_type='monte_carlo')
         
     
 

@@ -1,0 +1,1 @@
+(4, 4)500_monte_carlo_50--success rate 94.0%, fail rate 6.0%, time out rate 0.0%

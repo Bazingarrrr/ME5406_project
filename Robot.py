@@ -39,7 +39,7 @@ class Robot:
         elif greedy: # choose action greedily
             return max( policy[state], key=policy[state].get ) 
         else:
-            # choose action from polcy
+            # choose action from policy
             weights = policy[state].values()
             actions = list(policy[state].keys())
             return choices(actions, weights=weights, k=1)[0]

@@ -1,0 +1,1 @@
+(10, 10)2000_monte_carlo_50--success rate 42.0%, fail rate 56.0%, time out rate 2.0%
